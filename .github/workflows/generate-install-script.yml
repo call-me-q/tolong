@@ -1,0 +1,77 @@
+name: Deploy Install Script
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  deploy-install-script:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v3
+
+      - name: Set Up Git Config
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Generate Install Script
+        run: |
+          REPO="${GITHUB_REPOSITORY}"
+          mkdir -p gh-pages
+          cat <<EOF > gh-pages/install.sh
+          #!/bin/bash
+          set -e
+
+          APP_NAME="myapp"  # Replace with your binary name
+          INSTALL_DIR="/usr/local/bin"
+          LATEST_URL="https://api.github.com/repos/$REPO/releases/latest"
+
+          detect_platform() {
+            OS=\$(uname | tr '[:upper:]' '[:lower:]')
+            ARCH=\$(uname -m)
+            case "\$ARCH" in
+              x86_64) ARCH="x86_64";;
+              arm64) ARCH="aarch64";;
+              *) echo "Unsupported architecture: \$ARCH"; exit 1;;
+            esac
+            if [[ "\$OS" == "darwin" ]]; then
+              OS="apple-darwin"
+            elif [[ "\$OS" == "linux" ]]; then
+              OS="unknown-linux-gnu"
+            else
+              echo "Unsupported OS: \$OS"
+              exit 1
+            fi
+            PLATFORM="\${ARCH}-\${OS}"
+          }
+
+          install_binary() {
+            echo "Fetching the latest release info..."
+            DOWNLOAD_URL=\$(curl -s \$LATEST_URL | grep "browser_download_url" | grep "\$PLATFORM" | cut -d '"' -f 4)
+            if [[ -z "\$DOWNLOAD_URL" ]]; then
+              echo "No binary available for your platform (\$PLATFORM)."
+              exit 1
+            fi
+            echo "Downloading \$APP_NAME for \$PLATFORM..."
+            curl -L -o "\$APP_NAME" "\$DOWNLOAD_URL"
+            echo "Installing \$APP_NAME to \$INSTALL_DIR..."
+            chmod +x "\$APP_NAME"
+            sudo mv "\$APP_NAME" "\$INSTALL_DIR/"
+            echo "\$APP_NAME installed successfully!"
+            echo "Run '\$APP_NAME --help' to get started."
+          }
+
+          detect_platform
+          install_binary
+          EOF
+
+      - name: Deploy to GitHub Pages
+        run: |
+          git checkout --orphan gh-pages
+          mv gh-pages/* .
+          git add install.sh
+          git commit -m "Deploy install script for release ${{ github.event.release.tag_name }}"
+          git push --force origin gh-pages
